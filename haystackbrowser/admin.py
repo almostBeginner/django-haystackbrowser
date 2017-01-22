@@ -1,4 +1,3 @@
-import logging
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator, InvalidPage
 from haystack.exceptions import SearchBackendError
@@ -37,7 +36,6 @@ except ImportError:  # really old haystack, early in 1.2 series?
     DJANGO_ID = 'django_id'
 
 _haystack_version = '.'.join([str(x) for x in __version__])
-logger = logging.getLogger(__name__)
 
 def get_query_string(query_params, new_params=None, remove=None):
     # TODO: make this bettererer. Use propery dicty stuff on the Querydict?
@@ -167,11 +165,15 @@ class HaystackResultsAdmin(object):
     def urls(self):
         """Sets up the required urlconf for the admin views."""
         try:
-            # > 1.5
-            from django.conf.urls import patterns, url
-        except ImportError as e:
-            # < 1.5
-            from django.conf.urls.defaults import patterns, url
+            try:
+                # > 1.5
+                from django.conf.urls import patterns, url
+            except ImportError:
+                # < 1.5
+                from django.conf.urls.defaults import patterns, url
+        except ImportError:
+            # > 1.10
+            from django.conf.urls import url
 
 
         def wrap(view):
@@ -183,19 +185,33 @@ class HaystackResultsAdmin(object):
             model_key = self.model._meta.model_name
         else:
             model_key = self.model._meta.module_name
-
-        return patterns('',
-            url(regex=r'^(?P<content_type>.+)/(?P<pk>.+)/$',
-                view=wrap(self.view),
-                name='%s_%s_change' % (self.model._meta.app_label,
-                                       model_key)
-            ),
-            url(regex=r'^$',
-                view=wrap(self.index),
-                name='%s_%s_changelist' % (self.model._meta.app_label,
+        try:
+            return patterns('',
+                url(regex=r'^(?P<content_type>.+)/(?P<pk>.+)/$',
+                    view=wrap(self.view),
+                    name='%s_%s_change' % (self.model._meta.app_label,
                                            model_key)
-            ),
-        )
+                ),
+                url(regex=r'^$',
+                    view=wrap(self.index),
+                    name='%s_%s_changelist' % (self.model._meta.app_label,
+                                               model_key)
+                ),
+            )
+        except NameError:
+            urlpatterns=[
+                url(regex=r'^(?P<content_type>.+)/(?P<pk>.+)/$',
+                    view=wrap(self.view),
+                    name='%s_%s_change' % (self.model._meta.app_label,
+                                           model_key)
+                ),
+                url(regex=r'^$',
+                    view=wrap(self.index),
+                    name='%s_%s_changelist' % (self.model._meta.app_label,
+                                               model_key)
+                ),]
+            return urlpatterns
+
     urls = property(urls)
 
     def get_results_per_page(self, request):
@@ -423,19 +439,7 @@ class HaystackResultsAdmin(object):
         # by the search backend.
         model_instance = sqs.object.object
         if model_instance is not None:
-            # Refs #GH-15 - elasticsearch-py 2.x does not implement a .mlt
-            # method, but currently there's nothing in haystack-proper which
-            # prevents using the 2.x series with the haystack-es1 backend.
-            # At some point haystack will have a separate es backend ...
-            # and I have no idea if/how I'm going to support that.
-            try:
-                raw_mlt = SearchQuerySet().more_like_this(model_instance)[:5]
-            except AttributeError as e:
-                logger.debug("Support for 'more like this' functionality was "
-                             "not found, possibly because you're using "
-                             "the elasticsearch-py 2.x series with haystack's "
-                             "ES1.x backend", exc_info=1, extra={'request': request})
-                raw_mlt = ()
+            raw_mlt = SearchQuerySet().more_like_this(model_instance)[:5]
             more_like_this = self.get_wrapped_search_results(raw_mlt)
 
         form = PreSelectedModelSearchForm(request.GET or None, load_all=False)
